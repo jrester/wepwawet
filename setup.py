@@ -1,6 +1,6 @@
 import os
 
-from setuptools import setup
+from setuptools import find_packages, setup
 
 
 def read(fname):
@@ -13,8 +13,11 @@ setup(
     description="policy routing for VPNs",
     author="Jan-Niklas Weghorn",
     author_email="jrester379@gmail.com",
-    packages=["wepwawet"],
-    requires=read("requirements.txt").split("\n"),
-    scripts=["scripts/wepwawet"],
+    packages=find_packages(include="wepwawet"),
+    requires=read("requirements.txt").splitlines(),
+    python_requires=">=3",
+    entry_points={
+        "console_scripts": ["wepwawet=wepwawet.cli:cli"],
+    },
     long_description=read("README.md"),
 )

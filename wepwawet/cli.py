@@ -1,19 +1,18 @@
-#!/usr/bin/env python
-import os
-import click
-from threading import Event
 import logging
+from threading import Event
 
+import click
 from wepwawet.config import Config, VPNType
 from wepwawet.wepwawet import Wepwawet, Wireguard
-
 
 logger = logging.getLogger("wepwawet")
 logging.basicConfig(format="%(asctime)s | %(levelname)s | %(message)s")
 
+
 def err(msg):
     click.secho(msg, fg="red", err=True)
     exit(1)
+
 
 def _load_config(config_file):
     try:
@@ -24,13 +23,18 @@ def _load_config(config_file):
         err(f"{config_file} is invallid: {e}")
     return config
 
+
 @click.group()
 def cli():
     pass
 
+
 @click.command()
-@click.option('--config-file', default="config.yaml", help="Path to config file")
-@click.option('--log-level', default="INFO", help="Log level")
+@click.option("--config-file", default="config.yaml", help="Path to config file")
+@click.option("--log-level", default="INFO", help="Log level")
+@click.option(
+    "--standalone",
+)
 def run(config_file, log_level):
     config = _load_config(config_file)
     logger.setLevel(logging.getLevelName(log_level))
@@ -45,20 +49,20 @@ def run(config_file, log_level):
             evt = Event()
             evt.wait()
 
+
 @click.group()
 def config():
     pass
 
+
 @click.command()
-@click.option('--config-file', default="config.yaml", help="Path to config file")
+@click.option("--config-file", default="config.yaml", help="Path to config file")
 def validate(config_file):
     _load_config(config_file)
     click.secho(f"{config_file} is valid", fg="green")
+
 
 config.add_command(validate)
 
 cli.add_command(run)
 cli.add_command(config)
-
-if __name__ == "__main__":
-    cli()
