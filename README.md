@@ -1,6 +1,12 @@
 # Wepwawet
 
-A simple tool for routing traffic over VPNs using policies.
+A simple tool for routing traffic over VPNs using policies. Following policies are currently supported:
+
+* **user** - Route traffic based on the user ID.
+* **netns** - Route traffic base on the network namespace (base for other policies).
+* **process** - Route only traffic of a specific process.
+
+> Note: this project is currently work in progress and only stable in default environments. If you have an esoteric network configuration you might encounter issues.
 
 # Install
 
@@ -9,7 +15,20 @@ Install and update using pip:
 ```bash
 $ pip install wepwawet
 ```
-# Running
+# Examples
+
+Execute a command and route their traffic over a VPN. With config file:
+
+```bash
+$ sudo wepwawet --config 
+```
+
+Use existing VPN with interface wg:
+
+```bash
+$ sudo wepwawet --interface wg0 exec "curl api.myip.com -L" 
+```
+
 
 ```bash
 $ sudo wepwawet --config-file /etc/wepwawet

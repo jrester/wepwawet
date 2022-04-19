@@ -1,4 +1,6 @@
 from enum import Enum
+import ipaddress
+from typing import List
 
 import yaml
 from schema import Optional, Schema
@@ -33,17 +35,19 @@ SCHEMA = Schema(
         "vpn": dict,
         "interface": str,
         Optional("ipv6", default=True): bool,
+        Optional("nets", default=[]): list, 
     }
 )
 
 
 class Config:
-    def __init__(self, table_name, policies, vpn, interface, ipv6):
+    def __init__(self, table_name, policies, vpn, interface, ipv6, nets: List[str]):
         self.table_name = table_name
         self.policies = policies
         self.interface = interface
         self.ipv6 = ipv6
         self.vpn = vpn
+        self.nets = [ipaddress.ip_network(net) for net in nets]
 
     @staticmethod
     def from_dict(config_dict: dict) -> "Config":

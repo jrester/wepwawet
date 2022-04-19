@@ -1,11 +1,14 @@
 import ipaddress
 import logging
 import socket
-from typing import List
+from tkinter import W
+from tkinter.font import families
+from typing import List, Optional
 
 import pyroute2
 from wepwawet.config import Config
 from wepwawet.policies import RoutingPolicy
+from wepwawet.utils import add_iptables_nat_masquerade, del_iptables_nat_masquerade, get_iface_name_for_idx, get_route_for_dst_net
 
 logger = logging.getLogger("wepwawet")
 
@@ -17,58 +20,21 @@ class Wepwawet:
         interface,
         routing_policies: List[RoutingPolicy],
         ipv6: bool = True,
+        nets: List[ipaddress.IPv4Network | ipaddress.IPv6Network] = [],
     ):
         self._table_name = table_name
         self.interface = interface
         self.routing_policies = routing_policies
         self.ipv6 = ipv6
         self.ipr = pyroute2.IPRoute()
+        self.exemption_nets = nets 
 
     @staticmethod
     def from_config(config: Config) -> "Wepwawet":
         return Wepwawet(
-            config.table_name, config.interface, config.policies, config.ipv6
+            config.table_name, config.interface, config.policies, config.ipv6, config.nets
         )
 
-    def _add_to_list_if_not_already_in_subnet(self, subnet, local_networks):
-        """add the subnet to the list of local_networks if it is not a subnet or supernet of an existing local network"""
-        new_subnet = ipaddress.ip_network(subnet["dst"])
-        for local_network in local_networks:
-            local_net = ipaddress.ip_network(local_network["dst"])
-            if new_subnet.version == local_net.version:
-                if local_net.supernet_of(new_subnet):
-                    return
-                elif local_net.subnet_of(new_subnet):
-                    local_networks.remove(local_network)
-                    local_networks.append(subnet)
-                    return
-
-        local_networks.append(subnet)
-
-    def _get_local_networks(self) -> List[dict]:
-        local_networks = []
-        for route in self.ipr.get_routes():
-            dst = route.get_attr("RTA_DST")
-            if dst is None:
-                continue
-
-            net = f"{dst}/{route['dst_len']}"
-            if ipaddress.ip_network(net).is_private:
-                res = {"dst": net}
-                oif = route.get_attr("RTA_OIF")
-                gw = route.get_attr("RTA_GATEWAY")
-
-                if oif is None and gw is None:
-                    continue
-
-                if oif:
-                    res["oif"] = oif
-                else:
-                    res["gw"] = gw
-
-                self._add_to_list_if_not_already_in_subnet(res, local_networks)
-
-        return local_networks
 
     def _clean_up(self):
         self.ipr.flush_rules(table=self._table_name)
@@ -80,10 +46,28 @@ class Wepwawet:
         for policy in self.routing_policies:
             policy.up(self.ipr, self._table_name)
 
-    def _create_routing_tables(self):
-        self._apply_routing_policies()
+    def _apply_custom_routes(self):
+        for net in self.exemption_nets:
+            route = get_route_for_dst_net(net)
+            if route is not None:
+                self.ipr.route("add", table=self._table_name, family=route['family'], dst=str(net), oif=route.get_attr("RTA_OIF"), gw=route.get_attr("RTA_GATEWAY"))
+                iface_name = get_iface_name_for_idx(route.get_attr("RTA_OIF"))
+                add_iptables_nat_masquerade(iface_name, self.ipv6)
 
-        iface_idx = self.ipr.link_lookup(ifname=self.interface)[0]
+    def _cleanup_custom_routes(self):
+        for net in self.exemption_nets:
+            route = get_route_for_dst_net(net)
+            if route is not None:
+                iface_name = get_iface_name_for_idx(route.get_attr("RTA_OIF"))
+                del_iptables_nat_masquerade(iface_name, self.ipv6)
+
+
+    def _create_routing_tables(self):
+        iface_idx = self.ipr.link_lookup(ifname=self.interface)
+        if len(iface_idx) == 0:
+            raise RuntimeError(f"Interface {self.interface} not found")
+        iface_idx = iface_idx[0]
+        # add default route over interface
         self.ipr.route(
             "add",
             table=self._table_name,
@@ -104,21 +88,13 @@ class Wepwawet:
             # block all ipv6 traffic
             self.ipr.route("add", table=self._table_name, dst="::0/0", type="prohibit")
 
-        for local_network in self._get_local_networks():
-            family = socket.AF_INET
-            if isinstance(
-                ipaddress.ip_network(local_network["dst"]), ipaddress.IPv6Network
-            ):
-                if not self.ipv6:
-                    continue
-                family = socket.AF_INET6
+        self._apply_custom_routes()
 
-            self.ipr.route(
-                "add", table=self._table_name, family=family, **local_network
-            )
+        add_iptables_nat_masquerade(self.interface, self.ipv6)
 
         logger.info("Created routing tables")
 
+        
     def up(self):
         try:
             self._clean_up()
@@ -126,9 +102,21 @@ class Wepwawet:
             pass
 
         self._create_routing_tables()
+        self._apply_routing_policies()
 
     def down(self):
         self._clean_up()
+
+        del_iptables_nat_masquerade(self.interface, self.ipv6)
+        self._cleanup_custom_routes()
+
+        for policy in self.routing_policies:
+            policy.down(self.ipr)
+
+
+    def action(self):
+        for policy in self.routing_policies:
+            policy.action()
 
     def __enter__(self):
         self.up()
