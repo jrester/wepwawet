@@ -8,6 +8,8 @@ policies:
     killswitch: false
 interface: wg0
 ipv6: false
+nets:
+  - 192.168.0.0/24
 vpn:
   type: wireguard
   interface:

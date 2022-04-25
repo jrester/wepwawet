@@ -1,5 +1,5 @@
-from enum import Enum
 import ipaddress
+from enum import Enum
 from typing import List
 
 import yaml
@@ -13,6 +13,8 @@ class VPNType(Enum):
 
 
 UID_POLICY_SCHEMA = Schema({"type": "uid", "uid_range": str, "killswitch": bool})
+
+PROCESS_POLICY_SCHEMA = Schema({"type": "process", "cmd": str, "killswitch": bool})
 
 WG_SCHEMA = Schema(
     {
@@ -35,7 +37,7 @@ SCHEMA = Schema(
         "vpn": dict,
         "interface": str,
         Optional("ipv6", default=True): bool,
-        Optional("nets", default=[]): list, 
+        Optional("nets", default=[]): list,
     }
 )
 

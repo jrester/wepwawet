@@ -3,10 +3,9 @@
 A simple tool for routing traffic over VPNs using policies. Following policies are currently supported:
 
 * **user** - Route traffic based on the user ID.
-* **netns** - Route traffic base on the network namespace (base for other policies).
 * **process** - Route only traffic of a specific process.
 
-> Note: this project is currently work in progress and only stable in default environments. If you have an esoteric network configuration you might encounter issues.
+
 
 # Install
 
@@ -15,28 +14,43 @@ Install and update using pip:
 ```bash
 $ pip install wepwawet
 ```
+
 # Examples
 
 Execute a command and route their traffic over a VPN. With config file:
 
 ```bash
-$ sudo wepwawet --config 
+$ sudo wepwawet --config-file /etc/wepwawet/wepwawet.yaml exec /bin/bash
 ```
 
-Use existing VPN with interface wg:
+Use existing VPN with interface wg0:
 
 ```bash
-$ sudo wepwawet --interface wg0 exec "curl api.myip.com -L" 
+$ sudo wepwawet --interface wg0 exec "ping 1.1.1.1"
 ```
 
+Don't route subnet `192.168.0.0/24` and `192.168.1.0/24` over the vpn (e.g. for a home network):
 
 ```bash
-$ sudo wepwawet --config-file /etc/wepwawet
+$ sudo wepwawet --config-file /etc/wepwawet --net 192.168.0.0/24 --net 192.168.1.0/24 exec "ping 1.1.1.1"
 ```
+
+# Features
+
+- [x] uid routing
+- [x] network namespaces
+  - [x] per process routing
+  - [ ] per container routing
+- [x] Killswitch
+- [x]
+- [ ] VPNs
+  - [x] wireguard
+  - [ ] OpenVPN
+- [ ] ipv6
 
 # Config
 
-## Example Configuration
+## 1. Example Configuration
 
 ```yaml
 table_name: 10111
@@ -48,7 +62,6 @@ policies:
     uid_range: 972:972
     killswitch: false
 interface: wg0
-ipv6: false
 vpn:
   type: wireguard
   interface:
@@ -72,21 +85,18 @@ vpn:
 | `table_name` | A unique `int` that is used as an identifier for the routing tables. |
 | `policies` | list of policies to apply for the VPN |
 | `interface` | name of the interface that is going to be created for the VPN |
-| `ipv6` | whether IPv6 should be enabled |
 | `vpn` | configuration for the VPN |
 
-## Polices
+## 2. Polices
 
 Currently only the UID policy is supported.
 
-### Routing only traffic of specific user over VPN
+### 2.1. Routing only traffic of specific user over VPN
 
 ```yaml
----
 - type: uid
   uid_range: 963:963
   killswitch: true
----
 ```
 
 | option | value |
@@ -94,3 +104,10 @@ Currently only the UID policy is supported.
 | type | uid |
 | uid_range | colon delimited uids to route over the VPN |
 | killswitch | toggle whether the traffic should be dropped if the VPN interface goes down |
+
+
+### 2.2. Process
+
+```yaml
+- type: process
+```

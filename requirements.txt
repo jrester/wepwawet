@@ -1,4 +1,4 @@
-pyroute2
 click
-schema
+pyroute2
 pyyaml
+schema

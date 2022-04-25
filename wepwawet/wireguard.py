@@ -7,6 +7,7 @@ from wepwawet.config import Config
 
 logger = logging.getLogger("wepwawet")
 
+
 class Wireguard:
     def __init__(self, interface, config: dict):
         self.interface = interface

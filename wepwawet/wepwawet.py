@@ -1,14 +1,17 @@
-import ipaddress
 import logging
 import socket
-from tkinter import W
-from tkinter.font import families
-from typing import List, Optional
+from typing import List
 
 import pyroute2
 from wepwawet.config import Config
 from wepwawet.policies import RoutingPolicy
-from wepwawet.utils import add_iptables_nat_masquerade, del_iptables_nat_masquerade, get_iface_name_for_idx, get_route_for_dst_net
+from wepwawet.utils import (
+    add_iptables_nat_masquerade,
+    del_iptables_nat_masquerade,
+    get_iface_name_for_idx,
+    get_route_for_dst_net,
+    IPNetwork,
+)
 
 logger = logging.getLogger("wepwawet")
 
@@ -20,21 +23,24 @@ class Wepwawet:
         interface,
         routing_policies: List[RoutingPolicy],
         ipv6: bool = True,
-        nets: List[ipaddress.IPv4Network | ipaddress.IPv6Network] = [],
+        nets: List[IPNetwork] = [],
     ):
         self._table_name = table_name
         self.interface = interface
         self.routing_policies = routing_policies
         self.ipv6 = ipv6
         self.ipr = pyroute2.IPRoute()
-        self.exemption_nets = nets 
+        self.exemption_nets = nets
 
     @staticmethod
     def from_config(config: Config) -> "Wepwawet":
         return Wepwawet(
-            config.table_name, config.interface, config.policies, config.ipv6, config.nets
+            config.table_name,
+            config.interface,
+            config.policies,
+            config.ipv6,
+            config.nets,
         )
-
 
     def _clean_up(self):
         self.ipr.flush_rules(table=self._table_name)
@@ -50,7 +56,14 @@ class Wepwawet:
         for net in self.exemption_nets:
             route = get_route_for_dst_net(net)
             if route is not None:
-                self.ipr.route("add", table=self._table_name, family=route['family'], dst=str(net), oif=route.get_attr("RTA_OIF"), gw=route.get_attr("RTA_GATEWAY"))
+                self.ipr.route(
+                    "add",
+                    table=self._table_name,
+                    family=route["family"],
+                    dst=str(net),
+                    oif=route.get_attr("RTA_OIF"),
+                    gw=route.get_attr("RTA_GATEWAY"),
+                )
                 iface_name = get_iface_name_for_idx(route.get_attr("RTA_OIF"))
                 add_iptables_nat_masquerade(iface_name, self.ipv6)
 
@@ -60,7 +73,6 @@ class Wepwawet:
             if route is not None:
                 iface_name = get_iface_name_for_idx(route.get_attr("RTA_OIF"))
                 del_iptables_nat_masquerade(iface_name, self.ipv6)
-
 
     def _create_routing_tables(self):
         iface_idx = self.ipr.link_lookup(ifname=self.interface)
@@ -94,7 +106,6 @@ class Wepwawet:
 
         logger.info("Created routing tables")
 
-        
     def up(self):
         try:
             self._clean_up()
@@ -113,7 +124,6 @@ class Wepwawet:
         for policy in self.routing_policies:
             policy.down(self.ipr)
 
-
     def action(self):
         for policy in self.routing_policies:
             policy.action()
@@ -124,3 +134,4 @@ class Wepwawet:
 
     def __exit__(self, _type, _value, _traceback):
         self.down()
+        self.ipr.close()
