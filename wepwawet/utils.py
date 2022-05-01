@@ -2,10 +2,12 @@ import ipaddress
 import shutil
 import socket
 import subprocess
-from typing import List, Optional, Set
+from typing import Any, List, Optional, Set
 import os
 
-from pyroute2 import IPRoute, netns
+from pyroute2 import netns
+
+from wepwawet.ipr import IPR
 
 IPNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
 IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
@@ -21,34 +23,69 @@ def _exec_iptables(cmd: List[str], ipv6: bool):
     iptables = shutil.which("iptables")
     if iptables is None:
         raise RuntimeError("iptables executable not found")
-    p: subprocess.CompletedProcess = subprocess.run([iptables, *cmd])
-    p.check_returncode()
+    subprocess.run([iptables, *cmd])
     if ipv6:
         ip6tables = shutil.which("ip6tables")
         if ip6tables is None:
             raise RuntimeError("ip6tables executable not found")
-        p = subprocess.run([ip6tables, *cmd])
-        p.check_returncode()
+        subprocess.run([ip6tables, *cmd])
 
 
-def add_iptables_nat_masquerade(iface: str, ipv6: bool):
+def add_iptables_nat_masquerade(iface: str, comment: str, ipv6: bool):
     _exec_iptables(
-        ["-t", "nat", "-I", "POSTROUTING", "-o", iface, "-j", "MASQUERADE"], ipv6
+        [
+            "-t",
+            "nat",
+            "-I",
+            "POSTROUTING",
+            "-o",
+            iface,
+            "-m",
+            "comment",
+            "--comment",
+            comment,
+            "-j",
+            "MASQUERADE",
+        ],
+        ipv6,
     )
 
 
-def del_iptables_nat_masquerade(iface: str, ipv6: bool):
+def del_iptables_nat_masquerade(iface: str, comment: str, ipv6: bool):
     _exec_iptables(
-        ["-t", "nat", "-D", "POSTROUTING", "-o", iface, "-j", "MASQUERADE"], ipv6
+        [
+            "-t",
+            "nat",
+            "-D",
+            "POSTROUTING",
+            "-o",
+            iface,
+            "-m",
+            "comment",
+            "--comment",
+            comment,
+            "-j",
+            "MASQUERADE",
+        ],
+        ipv6,
     )
 
 
-def find_free_table_name(table_start: int = 10111):
+def _get_tables() -> Set[int]:
     tables: Set[int] = set()
-    with IPRoute() as ipr:
-        for route in ipr.get_routes():
-            tables.add(route["table"])
 
+    for rules in IPR.ipr.get_rules():
+        tables.add(rules.get_attr("FRA_TABLE"))
+
+    return tables
+
+
+def is_table_in_use(table: int) -> bool:
+    return table in _get_tables()
+
+
+def find_free_table_name(table_start: int = 10111) -> int:
+    tables = _get_tables()
     while table_start in tables:
         if table_start > 4294967295:
             raise RuntimeError("Could not found free table")
@@ -66,11 +103,10 @@ def find_free_netns_name(ns_name_base="wepwawet"):
     return f"{ns_name_base}{i}"
 
 
-def _get_all_links():
+def _get_all_links() -> List[str]:
     links = []
-    with IPRoute() as ipr:
-        for link in ipr.get_links():
-            links.append(link.get_attr("IFLA_IFNAME"))
+    for link in IPR.ipr.get_links():
+        links.append(link.get_attr("IFLA_IFNAME"))
     return links
 
 
@@ -89,26 +125,27 @@ def subnet_overlap_in_list(subnet, subnet_list):
     return False
 
 
-def find_unallocated_ip4_subnet(subnet_size: int) -> ipaddress.IPv4Network:
+def find_unallocated_ip4_subnet(
+    subnet_size: int,
+) -> ipaddress.IPv4Network:
     allocated_subnets = []
-    with IPRoute() as ipr:
-        # collect subnets from routes
-        for route in ipr.get_routes():
-            dst = route.get_attr("RTA_DST")
-            if dst is None:
-                continue
+    # collect subnets from routes
+    for route in IPR.ipr.get_routes():
+        dst = route.get_attr("RTA_DST")
+        if dst is None:
+            continue
 
-            allocated_subnets.append(
-                ipaddress.ip_network(f"{dst}/{route['dst_len']}", strict=False)
-            )
+        allocated_subnets.append(
+            ipaddress.ip_network(f"{dst}/{route['dst_len']}", strict=False)
+        )
 
-        # get link addresses
-        for addr in ipr.get_addr():
-            ip = addr.get_attr("IFA_ADDRESS")
-            prefix_len = addr["prefixlen"]
-            allocated_subnets.append(
-                ipaddress.ip_network(f"{ip}/{prefix_len}", strict=False)
-            )
+    # get link addresses
+    for addr in IPR.ipr.get_addr():
+        ip = addr.get_attr("IFA_ADDRESS")
+        prefix_len = addr["prefixlen"]
+        allocated_subnets.append(
+            ipaddress.ip_network(f"{ip}/{prefix_len}", strict=False)
+        )
 
     for prefix in PRIVATE_SUBNET_PREFIX:
         # supernet cannot be smaller than subnet...
@@ -134,25 +171,21 @@ def family_of_ip(net: IPNetwork | IPAddress) -> int:
 
 
 def get_iface_name_for_idx(idx: int) -> Optional[str]:
-    with IPRoute() as ipr:
-        iface = ipr.get_links(idx)
-        if len(iface) > 0:
-            return iface[0].get_attr("IFLA_IFNAME")
-        return None
+    iface = IPR.ipr.get_links(idx)
+    if len(iface) > 0:
+        return iface[0].get_attr("IFLA_IFNAME")
+    return None
 
 
-def get_route_for_dst_net(
-    net: ipaddress.IPv4Network | ipaddress.IPv6Network,
-) -> Optional[dict]:
-    with IPRoute() as ipr:
-        for route in ipr.get_routes():
-            dst = route.get_attr("RTA_DST")
-            if dst is None:
-                continue
+def get_route_for_dst_net(net: IPNetwork) -> Optional[Any]:
+    for route in IPR.ipr.get_routes():
+        dst = route.get_attr("RTA_DST")
+        if dst is None:
+            continue
 
-            route_net = ipaddress.ip_network(f"{dst}/{route['dst_len']}")
-            if family_of_ip(net) == route["family"] and route_net.overlaps(net):
-                return route
+        route_net = ipaddress.ip_network(f"{dst}/{route['dst_len']}")
+        if family_of_ip(net) == route["family"] and route_net.overlaps(net):
+            return route
 
     return None
 
